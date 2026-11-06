@@ -11,6 +11,8 @@ final class ClipboardMonitor {
     private let pasteboard = NSPasteboard.general
     private var lastChangeCount: Int
     private var timer: Timer?
+    /// Returns true for apps whose copies should never be saved (password managers, banking…).
+    var isIgnored: (String?) -> Bool = { _ in false }
 
     init(store: ClipStore) {
         self.store = store
@@ -37,15 +39,16 @@ final class ClipboardMonitor {
         guard count != lastChangeCount else { return }
         lastChangeCount = count
 
-        guard let content = PasteboardIO.read(pasteboard) else { return }
-        let source = NSWorkspace.shared.frontmostApplication.map {
-            ClipSource(name: $0.localizedName ?? "App", bundleID: $0.bundleIdentifier)
-        }
+        let app = NSWorkspace.shared.frontmostApplication
+        guard !isIgnored(app?.bundleIdentifier), let content = PasteboardIO.read(pasteboard) else { return }
+        let source = app.map { ClipSource(name: $0.localizedName ?? "App", bundleID: $0.bundleIdentifier) }
         switch content {
-        case .text(let text):
-            store.addText(text, source: source)
+        case .text(let text, let rtf):
+            store.addText(text, rtf: rtf, source: source)
         case .image(let png):
             store.addImage(png: png, source: source)
+        case .files(let paths):
+            store.addFiles(paths, source: source)
         }
     }
 }

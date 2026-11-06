@@ -5,8 +5,9 @@ import NotchClipCore
 
 /// What we pulled off the system clipboard.
 enum ClipContent {
-    case text(String)
+    case text(String, rtf: Data?)
     case image(png: Data)
+    case files([String])
 }
 
 /// Reads and writes the system clipboard.
@@ -19,14 +20,17 @@ enum PasteboardIO {
         "com.agilebits.onepassword",
     ]
     static let maxImageFileBytes = 50 * 1024 * 1024
+    static let maxRTFBytes = 5 * 1024 * 1024
 
     static func read(_ pasteboard: NSPasteboard) -> ClipContent? {
         let types = pasteboard.types ?? []
         guard !types.contains(where: { privateTypes.contains($0.rawValue) }) else { return nil }
 
-        // A copied file in Finder: keep it only when it is a picture.
+        // Copied Finder items: a single picture becomes an image clip, anything else a file clip.
         if types.contains(.fileURL) {
-            return imageFromFile(pasteboard)
+            let urls = fileURLs(pasteboard)
+            if urls.count == 1, let png = imageFromFile(urls[0]) { return .image(png: png) }
+            return urls.isEmpty ? nil : .files(urls.map(\.path))
         }
 
         // Respect the source's own preference order: whichever of image/text it lists first wins.
@@ -36,17 +40,24 @@ enum PasteboardIO {
             return .image(png: png)
         }
         if let text = pasteboard.string(forType: .string) {
-            return .text(text)
+            return .text(text, rtf: richText(pasteboard))
+        }
+        // Some apps put only formatted text on the clipboard; derive the plain text from it.
+        if let rtf = richText(pasteboard), let plain = NSAttributedString(rtf: rtf, documentAttributes: nil)?.string {
+            return .text(plain, rtf: rtf)
         }
         return imageData(pasteboard).map { .image(png: $0) }
     }
 
     /// Puts a history item back on the clipboard. Returns the new change count, or nil on failure.
-    static func write(_ item: ClipItem, store: ClipStore, to pasteboard: NSPasteboard) -> Int? {
+    static func write(_ item: ClipItem, store: ClipStore, keepFormatting: Bool, to pasteboard: NSPasteboard) -> Int? {
         switch item.kind {
         case .text:
             guard let text = item.text else { return nil }
             pasteboard.clearContents()
+            if keepFormatting, let url = store.richTextURL(for: item), let rtf = try? Data(contentsOf: url) {
+                pasteboard.setData(rtf, forType: .rtf)
+            }
             guard pasteboard.setString(text, forType: .string) else { return nil }
         case .image:
             guard let url = store.imageURL(for: item), let png = try? Data(contentsOf: url) else { return nil }
@@ -56,6 +67,12 @@ enum PasteboardIO {
             if let tiff = NSBitmapImageRep(data: png)?.tiffRepresentation {
                 pasteboard.setData(tiff, forType: .tiff)
             }
+        case .file:
+            let urls = (item.filePaths ?? []).map { URL(fileURLWithPath: $0) }
+                .filter { FileManager.default.fileExists(atPath: $0.path) }
+            guard !urls.isEmpty else { return nil }
+            pasteboard.clearContents()
+            guard pasteboard.writeObjects(urls as [NSURL]) else { return nil }
         }
         return pasteboard.changeCount
     }
@@ -65,21 +82,31 @@ enum PasteboardIO {
         return pasteboard.setString(text, forType: .string) ? pasteboard.changeCount : nil
     }
 
+    private static func fileURLs(_ pasteboard: NSPasteboard) -> [URL] {
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+        return (pasteboard.readObjects(forClasses: [NSURL.self], options: options) as? [URL]) ?? []
+    }
+
+    /// Formatting for rich text: RTF directly, or converted from HTML (web pages, Google Docs).
+    private static func richText(_ pasteboard: NSPasteboard) -> Data? {
+        if let rtf = pasteboard.data(forType: .rtf), rtf.count <= maxRTFBytes { return rtf }
+        guard let html = pasteboard.data(forType: .html), html.count <= maxRTFBytes,
+              let attributed = NSAttributedString(html: html, documentAttributes: nil) else { return nil }
+        let range = NSRange(location: 0, length: attributed.length)
+        return try? attributed.data(from: range, documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf])
+    }
+
     private static func imageData(_ pasteboard: NSPasteboard) -> Data? {
         if let png = pasteboard.data(forType: .png) { return png }
         return pasteboard.data(forType: .tiff).flatMap(pngData)
     }
 
-    private static func imageFromFile(_ pasteboard: NSPasteboard) -> ClipContent? {
-        let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
-        guard let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: options) as? [URL],
-              urls.count == 1, let url = urls.first,
-              let type = UTType(filenameExtension: url.pathExtension), type.conforms(to: .image),
+    private static func imageFromFile(_ url: URL) -> Data? {
+        guard let type = UTType(filenameExtension: url.pathExtension), type.conforms(to: .image),
               let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize,
               size <= maxImageFileBytes,
-              let data = try? Data(contentsOf: url),
-              let png = pngData(data) else { return nil }
-        return .image(png: png)
+              let data = try? Data(contentsOf: url) else { return nil }
+        return pngData(data)
     }
 
     private static func pngData(_ data: Data) -> Data? {

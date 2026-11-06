@@ -138,6 +138,42 @@ struct ClipStoreTests {
         #expect(item.text == "old" && item.pinned == false && item.ocrText == nil)
     }
 
+    @Test func autoDeleteKeepsPinnedAndRecentClips() throws {
+        let store = makeStore()
+        let now = Date()
+        let old = try #require(store.addText("old", now: now.addingTimeInterval(-10 * 86_400)))
+        let pinnedOld = try #require(store.addText("pinned old", now: now.addingTimeInterval(-10 * 86_400)))
+        store.setPinned(true, id: pinnedOld.id)
+        store.addText("new", now: now)
+        #expect(store.prune(olderThan: 7 * 86_400, now: now) == 1)
+        #expect(!store.items.contains { $0.id == old.id })
+        #expect(Set(store.items.compactMap(\.text)) == ["pinned old", "new"])
+    }
+
+    @Test func loweringTheLimitDropsOldestClips() {
+        let store = makeStore(limit: 10)
+        (1...6).forEach { store.addText("clip \($0)") }
+        store.setLimit(2)
+        #expect(store.items.map(\.text) == ["clip 6", "clip 5"])
+    }
+
+    @Test func formattingIsSavedAndDeletedWithTheClip() throws {
+        let store = makeStore()
+        let item = try #require(store.addText("bold", rtf: Data("{\\rtf1 \\b bold}".utf8)))
+        let url = try #require(store.richTextURL(for: item))
+        #expect(FileManager.default.fileExists(atPath: url.path))
+        store.remove(id: item.id)
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+    }
+
+    @Test func filesAreSavedAsPathsAndSearchable() throws {
+        let store = makeStore()
+        let item = try #require(store.addFiles(["/Users/me/Documents/Invoice March.pdf"]))
+        #expect(item.kind == .file && item.fileNames == ["Invoice March.pdf"])
+        #expect(store.search("invoice").map(\.id) == [item.id])
+        #expect(store.addFiles([]) == nil)
+    }
+
     @Test(arguments: [(10, "now"), (120, "2m"), (7200, "2h"), (172_800, "2d")])
     func relativeTimeLabels(seconds: Int, label: String) {
         let now = Date()

@@ -23,7 +23,36 @@ enum Layout {
     }
 }
 
-/// Everything the SwiftUI panel shows. The controller owns the behaviour.
+/// What the open panel is showing.
+enum PanelMode: Equatable {
+    case clips
+    case preview(ClipItem)
+    case ai(ClipItem)
+}
+
+/// An AI request shown in the panel.
+struct AIRun: Equatable {
+    enum Status: Equatable {
+        case thinking
+        case writing(String)
+        case done(String)
+        case failed(String)
+    }
+
+    let id = UUID()
+    let item: ClipItem
+    let action: AIAction
+    var status: Status
+
+    var output: String? {
+        switch status {
+        case .writing(let text), .done(let text): return text
+        default: return nil
+        }
+    }
+}
+
+/// Everything the SwiftUI panel shows. The controller and app delegate own the behaviour.
 @MainActor
 final class NotchModel: ObservableObject {
     @Published var isOpen = false
@@ -33,6 +62,11 @@ final class NotchModel: ObservableObject {
     @Published var notchSize = CGSize(width: 200, height: 32)
     @Published var hasNotch = true
     @Published var toast: String?
+    @Published var mode = PanelMode.clips
+    @Published var aiRun: AIRun?
+    @Published var aiProviderName = ""
+    /// Clips queued with ⌘-click, pasted one by one with the stack shortcut.
+    @Published private(set) var stack: [UUID] = []
     /// Search box text. Changing it filters the clips.
     @Published var query = "" {
         didSet {
@@ -42,10 +76,17 @@ final class NotchModel: ObservableObject {
         }
     }
 
-    /// Paste a clip. `asText` pastes the text read from an image instead of the image.
-    var onPick: (ClipItem, _ asText: Bool) -> Void = { _, _ in }
+    /// Paste a clip. `plain` drops formatting; for images it pastes the text read from the image.
+    var onPick: (ClipItem, _ plain: Bool) -> Void = { _, _ in }
+    var onPasteStack: () -> Void = {}
     var onDelete: (ClipItem) -> Void = { _ in }
     var onTogglePin: (ClipItem) -> Void = { _ in }
+    var onRunAI: (ClipItem, AIAction) -> Void = { _, _ in }
+    var onUseAIResult: (String, _ paste: Bool) -> Void = { _, _ in }
+    var onCancelAI: () -> Void = {}
+    var onOpenSettings: () -> Void = {}
+    /// Asks the controller to give the panel keyboard focus (for typing in the AI box).
+    var onNeedsFocus: () -> Void = {}
 
     private let store: ClipStore
     private var thumbnails: [UUID: NSImage] = [:]
@@ -58,11 +99,14 @@ final class NotchModel: ObservableObject {
 
     var headerHeight: CGFloat { max(notchSize.height, 28) }
     var openSize: CGSize { CGSize(width: Layout.openWidth, height: Layout.openHeight(headerHeight: headerHeight)) }
+    /// While true, moving the mouse away does not close the panel.
+    var isSticky: Bool { keyboardMode || mode != .clips }
 
     func reload() {
         refilter()
         let ids = Set(store.items.map(\.id))
         thumbnails = thumbnails.filter { ids.contains($0.key) }
+        stack = stack.filter(ids.contains)
     }
 
     private func refilter() {
@@ -81,6 +125,14 @@ final class NotchModel: ObservableObject {
         return image
     }
 
+    func imageFileURL(for item: ClipItem) -> URL? {
+        store.imageURL(for: item)
+    }
+
+    func fullImage(for item: ClipItem) -> NSImage? {
+        store.imageURL(for: item).flatMap(NSImage.init(contentsOf:))
+    }
+
     func appIcon(for item: ClipItem) -> NSImage? {
         guard let bundleID = item.source?.bundleID else { return nil }
         if let cached = appIcons[bundleID] { return cached }
@@ -95,9 +147,57 @@ final class NotchModel: ObservableObject {
         selection = min(max(0, selection + delta), items.count - 1)
     }
 
+    // MARK: Paste stack
+
+    func stackPosition(of item: ClipItem) -> Int? {
+        stack.firstIndex(of: item.id).map { $0 + 1 }
+    }
+
+    func toggleStack(_ item: ClipItem) {
+        withAnimation(.snappy(duration: 0.15)) {
+            stack = stack.contains(item.id) ? stack.filter { $0 != item.id } : stack + [item.id]
+        }
+    }
+
+    func clearStack() {
+        withAnimation(.snappy(duration: 0.15)) { stack = [] }
+    }
+
+    /// Takes the next clip off the stack.
+    func popStack() -> ClipItem? {
+        while let first = stack.first {
+            stack = Array(stack.dropFirst())
+            if let item = store.items.first(where: { $0.id == first }) { return item }
+        }
+        return nil
+    }
+
+    var stackedItems: [ClipItem] {
+        stack.compactMap { id in store.items.first { $0.id == id } }
+    }
+
+    // MARK: Modes
+
+    func showPreview(_ item: ClipItem) {
+        withAnimation(.snappy(duration: 0.2)) { mode = .preview(item) }
+    }
+
+    func showAI(_ item: ClipItem) {
+        aiRun = nil
+        withAnimation(.snappy(duration: 0.2)) { mode = .ai(item) }
+        onNeedsFocus()
+    }
+
+    func backToClips() {
+        if aiRun?.status == .thinking { onCancelAI() }
+        if case .writing = aiRun?.status { onCancelAI() }
+        aiRun = nil
+        withAnimation(.snappy(duration: 0.2)) { mode = .clips }
+    }
+
     func showToast(_ text: String) {
         withAnimation(.easeOut(duration: 0.15)) { toast = text }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { [weak self] in
             guard self?.toast == text else { return }
             withAnimation(.easeIn(duration: 0.2)) { self?.toast = nil }
         }

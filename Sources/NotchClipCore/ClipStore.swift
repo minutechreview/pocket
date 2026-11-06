@@ -12,7 +12,7 @@ public final class ClipStore {
 
     public private(set) var items: [ClipItem] = []
     public let directory: URL
-    public let limit: Int
+    public private(set) var limit: Int
     public var onChange: (() -> Void)?
 
     private let fileManager = FileManager.default
@@ -36,20 +36,43 @@ public final class ClipStore {
         item.imageFile.map { imagesDirectory.appendingPathComponent($0) }
     }
 
+    public func richTextURL(for item: ClipItem) -> URL? {
+        item.richFile.map { imagesDirectory.appendingPathComponent($0) }
+    }
+
     public func thumbnailURL(for item: ClipItem) -> URL? {
         (item.thumbFile ?? item.imageFile).map { imagesDirectory.appendingPathComponent($0) }
     }
 
     // MARK: Adding
 
-    /// Adds copied text. Blank text and text over `maxTextLength` are ignored.
+    /// Adds copied text, plus its formatting as RTF when the source app provided it.
+    /// Blank text and text over `maxTextLength` are ignored.
     @discardableResult
-    public func addText(_ text: String, source: ClipSource? = nil, now: Date = Date()) -> ClipItem? {
+    public func addText(_ text: String, rtf: Data? = nil, source: ClipSource? = nil, now: Date = Date()) -> ClipItem? {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               text.count <= Self.maxTextLength else { return nil }
         let hash = Self.digest(Data(text.utf8), prefix: "t")
         if let existing = bringToTop(hash: hash, now: now) { return existing }
-        return insert(ClipItem(kind: .text, text: text, hash: hash, date: now, source: source))
+        let id = UUID()
+        var richName: String?
+        if let rtf, !rtf.isEmpty {
+            let name = "\(id.uuidString).rtf"
+            if (try? rtf.write(to: imagesDirectory.appendingPathComponent(name), options: .atomic)) != nil {
+                richName = name
+            }
+        }
+        return insert(ClipItem(id: id, kind: .text, text: text, richFile: richName, hash: hash, date: now, source: source))
+    }
+
+    /// Adds copied Finder files (stored as paths; the files themselves are not copied).
+    @discardableResult
+    public func addFiles(_ paths: [String], source: ClipSource? = nil, now: Date = Date()) -> ClipItem? {
+        let paths = paths.filter { !$0.isEmpty }
+        guard !paths.isEmpty else { return nil }
+        let hash = Self.digest(Data(paths.joined(separator: "\n").utf8), prefix: "f")
+        if let existing = bringToTop(hash: hash, now: now) { return existing }
+        return insert(ClipItem(kind: .file, filePaths: paths, hash: hash, date: now, source: source))
     }
 
     /// Adds a copied image given as PNG data. Writes the PNG and a small thumbnail to disk.
@@ -115,6 +138,28 @@ public final class ClipStore {
         }
     }
 
+    /// Changes how many unpinned clips are kept, dropping the oldest extras.
+    public func setLimit(_ newLimit: Int) {
+        limit = max(1, newLimit)
+        let extra = Set(items.filter { !$0.pinned }.dropFirst(limit).map(\.id))
+        guard !extra.isEmpty else { return }
+        items.filter { extra.contains($0.id) }.forEach(deleteFiles)
+        items = items.filter { !extra.contains($0.id) }
+        save()
+    }
+
+    /// Deletes unpinned clips older than `maxAge`. Returns how many were removed.
+    @discardableResult
+    public func prune(olderThan maxAge: TimeInterval, now: Date = Date()) -> Int {
+        let old = items.filter { !$0.pinned && now.timeIntervalSince($0.date) > maxAge }
+        guard !old.isEmpty else { return 0 }
+        old.forEach(deleteFiles)
+        let ids = Set(old.map(\.id))
+        items = items.filter { !ids.contains($0.id) }
+        save()
+        return old.count
+    }
+
     public func remove(id: UUID) {
         guard let item = items.first(where: { $0.id == id }) else { return }
         deleteFiles(of: item)
@@ -153,7 +198,7 @@ public final class ClipStore {
     }
 
     private func deleteFiles(of item: ClipItem) {
-        [item.imageFile, item.thumbFile].compactMap { $0 }.forEach {
+        item.ownedFiles.forEach {
             try? fileManager.removeItem(at: imagesDirectory.appendingPathComponent($0))
         }
     }
@@ -196,7 +241,7 @@ public final class ClipStore {
         return (width, height)
     }
 
-    static func thumbnail(of imageData: Data, maxPixels: Int) -> Data? {
+    public static func thumbnail(of imageData: Data, maxPixels: Int) -> Data? {
         guard let source = CGImageSourceCreateWithData(imageData as CFData, nil) else { return nil }
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,

@@ -47,9 +47,9 @@ final class NotchController {
     private var keyMonitor: Any?
     private var resignObserver: NSObjectProtocol?
 
-    init(model: NotchModel) {
+    init(model: NotchModel, settings: SettingsStore) {
         self.model = model
-        let host = FirstClickHostingView(rootView: NotchView(model: model))
+        let host = FirstClickHostingView(rootView: NotchView(model: model, settings: settings))
         host.sizingOptions = []
         panel.contentView = host
     }
@@ -66,7 +66,7 @@ final class NotchController {
             forName: NSWindow.didResignKeyNotification, object: panel, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, self.model.keyboardMode, self.model.isOpen else { return }
+                guard let self, self.model.isSticky, self.model.isOpen else { return }
                 self.close()
             }
         }
@@ -111,9 +111,15 @@ final class NotchController {
         withAnimation(.spring(response: 0.38, dampingFraction: 0.78)) { model.isOpen = true }
     }
 
+    /// Gives the panel keyboard focus without bringing NotchClip to the front.
+    func focusPanel() {
+        panel.makeKeyAndOrderFront(nil)
+    }
+
     func close() {
         guard model.isOpen else { return }
         model.query = ""
+        model.backToClips()
         withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) { model.isOpen = false }
         model.keyboardMode = false
         giveFocusBack()
@@ -173,7 +179,7 @@ final class NotchController {
         let point = NSEvent.mouseLocation
         if model.isOpen {
             hoverStart = nil
-            if !model.keyboardMode && !openShapeRect.contains(point) && NSEvent.pressedMouseButtons == 0 {
+            if !model.isSticky && !openShapeRect.contains(point) && NSEvent.pressedMouseButtons == 0 {
                 close()
             }
             return
@@ -190,18 +196,46 @@ final class NotchController {
         }
     }
 
-    // MARK: Keyboard (only while the panel has focus after the shortcut)
+    // MARK: Keyboard
+
+    /// Keys in the preview and AI views: Esc goes back, Space closes the preview, ⌘Return pastes.
+    private func handleDetailKey(_ event: NSEvent, flags: NSEvent.ModifierFlags) -> Bool {
+        let inPreview: Bool = { if case .preview = model.mode { return true } else { return false } }()
+        switch Int(event.keyCode) {
+        case 53:
+            model.backToClips()
+            return true
+        case 49 where inPreview:
+            model.backToClips()
+            return true
+        case 36 where flags.contains(.command), 76 where flags.contains(.command):
+            if case .done(let text) = model.aiRun?.status { model.onUseAIResult(text, true); return true }
+            if case .preview(let item) = model.mode { model.onPick(item, false); return true }
+            return false
+        default:
+            return false
+        }
+    }
+
+    // Clip keys (only while the panel has focus)
 
     /// Typing goes to the search box; these keys drive the clips instead.
     private func handleKey(_ event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if model.mode != .clips { return handleDetailKey(event, flags: flags) }
         let command = flags.contains(.command)
         let selected = model.selectedItem
         switch Int(event.keyCode) {
         case 53:                                           // Esc: clear search, then close
             if model.query.isEmpty { close() } else { model.query = "" }
-        case 36, 76:                                       // Return (⇧ = paste text from image)
-            if let selected { model.onPick(selected, flags.contains(.shift)) }
+        case 36, 76:                                       // Return (⌥/⇧ = plain text / text from image)
+            if let selected { model.onPick(selected, flags.contains(.shift) || flags.contains(.option)) }
+        case 49 where model.query.isEmpty:                 // Space: big preview
+            if let selected { model.showPreview(selected) }
+        case 38 where command:                             // ⌘J: AI actions
+            if let selected, selected.workingText != nil { model.showAI(selected) }
+        case 1 where command:                              // ⌘S: add to / remove from paste stack
+            if let selected { model.toggleStack(selected) }
         case 123: model.moveSelection(by: -1)              // ←
         case 124: model.moveSelection(by: 1)               // →
         case 126: model.moveSelection(by: -Layout.columns) // ↑
