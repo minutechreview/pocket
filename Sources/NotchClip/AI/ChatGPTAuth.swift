@@ -7,7 +7,7 @@ import Foundation
 actor ChatGPTAuth {
     static let shared = ChatGPTAuth()
 
-    static let appName = "NotchClip"
+    static let appName = "Pocket"
     static let authorizeURL = URL(string: "https://auth.openai.com/api/accounts/authorize")!
     static let tokenURL = URL(string: "https://auth.openai.com/api/accounts/oauth/token")!
     static let resource = "https://api.openai.com/v1"
@@ -75,7 +75,7 @@ actor ChatGPTAuth {
             clientID = existing.clientID
         } else {
             guard let issued = callback["client_id"], issued != "dynamic_agent_client" else {
-                throw AIError.server("ChatGPT didn't finish registering NotchClip. Please try again.")
+                throw AIError.server("ChatGPT didn't finish registering Pocket. Please try again.")
             }
             clientID = issued
             registration = Registration(clientID: issued)

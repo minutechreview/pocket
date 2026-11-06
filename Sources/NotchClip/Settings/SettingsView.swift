@@ -49,7 +49,7 @@ private struct GeneralTab: View {
                 Button("Clear History…", role: .destructive, action: onClearHistory)
             }
             Section("Startup") {
-                Toggle("Open NotchClip at login", isOn: $openAtLogin)
+                Toggle("Open Pocket at login", isOn: $openAtLogin)
                     .onChange(of: openAtLogin) { _, enabled in setLogin(enabled) }
                 if let loginError { Text(loginError).font(.caption).foregroundStyle(.red) }
             }
@@ -89,7 +89,7 @@ private struct PrivacyTab: View {
             } header: {
                 Text("Never save copies from these apps")
             } footer: {
-                Text("Passwords copied from password managers are always skipped. Everything NotchClip saves stays on this Mac.")
+                Text("Passwords copied from password managers are always skipped. Everything Pocket saves stays on this Mac.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

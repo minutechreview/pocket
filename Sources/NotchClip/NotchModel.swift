@@ -142,6 +142,16 @@ final class NotchModel: ObservableObject {
         return icon
     }
 
+    /// ⇧ + arrow: picks the current clip, moves, and picks the next one too (like shift-selecting files).
+    func extendSelection(by delta: Int) {
+        guard let current = selectedItem else { return }
+        withAnimation(.snappy(duration: 0.15)) {
+            if !stack.contains(current.id) { stack.append(current.id) }
+            moveSelection(by: delta)
+            if let next = selectedItem, !stack.contains(next.id) { stack.append(next.id) }
+        }
+    }
+
     func moveSelection(by delta: Int) {
         guard !items.isEmpty else { return }
         selection = min(max(0, selection + delta), items.count - 1)

@@ -1,10 +1,10 @@
 #!/bin/zsh
-# Builds NotchClip.app (release), signs it, and optionally installs it to /Applications.
+# Builds Pocket.app (the NotchClip package) (release), signs it, and optionally installs it to /Applications.
 # Usage: scripts/build-app.sh [--install]
 set -euo pipefail
 
 ROOT="${0:A:h:h}"
-APP="$ROOT/build/NotchClip.app"
+APP="$ROOT/build/Pocket.app"
 VERSION="0.1.0"
 
 cd "$ROOT"
@@ -32,8 +32,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>NotchClip</string>
-  <key>CFBundleDisplayName</key><string>NotchClip</string>
+  <key>CFBundleName</key><string>Pocket</string>
+  <key>CFBundleDisplayName</key><string>Pocket</string>
   <key>CFBundleIdentifier</key><string>com.minutechbuilds.notchclip</string>
   <key>CFBundleExecutable</key><string>NotchClip</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
@@ -55,8 +55,8 @@ echo "Built $APP (signed: ${IDENTITY:-ad-hoc})"
 
 if [[ "${1:-}" == "--install" ]]; then
   pkill -x NotchClip 2>/dev/null || true
-  rm -rf /Applications/NotchClip.app
-  cp -R "$APP" /Applications/NotchClip.app
-  open /Applications/NotchClip.app
+  rm -rf /Applications/NotchClip.app /Applications/Pocket.app
+  cp -R "$APP" /Applications/Pocket.app
+  open /Applications/Pocket.app
   echo "Installed to /Applications and launched"
 fi

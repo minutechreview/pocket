@@ -217,6 +217,15 @@ final class NotchController {
         }
     }
 
+    private static func arrowStep(_ keyCode: UInt16) -> Int {
+        switch keyCode {
+        case 123: return -1
+        case 124: return 1
+        case 126: return -Layout.columns
+        default: return Layout.columns
+        }
+    }
+
     // Clip keys (only while the panel has focus)
 
     /// Typing goes to the search box; these keys drive the clips instead.
@@ -226,10 +235,14 @@ final class NotchController {
         let command = flags.contains(.command)
         let selected = model.selectedItem
         switch Int(event.keyCode) {
-        case 53:                                           // Esc: clear search, then close
-            if model.query.isEmpty { close() } else { model.query = "" }
+        case 53:                                           // Esc: clear search, then the picked clips, then close
+            if !model.query.isEmpty { model.query = "" } else if !model.stack.isEmpty { model.clearStack() } else { close() }
+        case 36, 76 where !model.stack.isEmpty:            // Return with picked clips: paste them all, in order
+            model.onPasteStack()
         case 36, 76:                                       // Return (⌥/⇧ = plain text / text from image)
             if let selected { model.onPick(selected, flags.contains(.shift) || flags.contains(.option)) }
+        case 123...126 where flags.contains(.shift):       // ⇧ + arrows: pick several clips (⌃ + arrows switches Spaces)
+            model.extendSelection(by: Self.arrowStep(event.keyCode))
         case 49 where model.query.isEmpty:                 // Space: big preview
             if let selected { model.showPreview(selected) }
         case 38 where command:                             // ⌘J: AI actions

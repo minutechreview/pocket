@@ -6,10 +6,12 @@ import SwiftUI
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static let pasteDelay: TimeInterval = 0.12
+    static let sequenceGap: TimeInterval = 0.35
     static let pruneInterval: TimeInterval = 3600
 
     private let settings = SettingsStore()
-    private lazy var store = ClipStore(limit: settings.value.historyLimit)
+    private lazy var store = ClipStore(directory: DemoMode.isOn ? DemoMode.directory : ClipStore.defaultDirectory(),
+                                       limit: settings.value.historyLimit)
     private lazy var monitor = ClipboardMonitor(store: store)
     private lazy var model = NotchModel(store: store)
     private lazy var controller = NotchController(model: model, settings: settings)
@@ -29,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.textReader.readPending()
             }
         }
+        if DemoMode.isOn { DemoMode.seedIfEmpty(store) }
         wireModel()
         monitor.isIgnored = { [weak self] bundleID in self?.settings.value.ignores(bundleID: bundleID) ?? false }
         settings.onChange = { [weak self] old, new in self?.apply(old: old, new: new) }
@@ -142,7 +145,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if paste {
             guard let changeCount = PasteboardIO.write(text: text, to: .general) else { return }
             monitor.skip(changeCount: changeCount)
-            store.addText(text, source: ClipSource(name: "NotchClip AI", bundleID: nil))
+            store.addText(text, source: ClipSource(name: "Pocket AI", bundleID: nil))
             pasteAndClose()
         } else {
             // Copy: goes on the clipboard and into history like any other copy.
@@ -165,16 +168,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// "Paste all": every stacked clip's text joined by new lines, pasted at once.
+    /// "Paste all": all-text picks go in as one paste (one per line); a mix with images or files is pasted one by one.
     private func pasteWholeStack() {
-        let texts = model.stackedItems.compactMap(\.workingText)
-        guard !texts.isEmpty, let changeCount = PasteboardIO.write(text: texts.joined(separator: "\n"), to: .general) else {
-            model.showToast("Only text clips can be pasted together")
+        let items = model.stackedItems
+        guard !items.isEmpty else { return }
+        model.clearStack()
+        let texts = items.compactMap { $0.kind == .text ? $0.workingText : nil }
+        if texts.count == items.count, let changeCount = PasteboardIO.write(text: texts.joined(separator: "\n"), to: .general) {
+            monitor.skip(changeCount: changeCount)
+            pasteAndClose()
             return
         }
-        monitor.skip(changeCount: changeCount)
-        model.clearStack()
-        pasteAndClose()
+        guard Paster.isAllowed else {
+            model.showToast("Turn on Accessibility for Pocket to paste several clips")
+            Paster.requestPermission()
+            return
+        }
+        controller.close()
+        pasteInSequence(items, after: Self.pasteDelay)
+    }
+
+    /// Puts each clip on the clipboard and sends ⌘V, with a short gap so the front app keeps up.
+    private func pasteInSequence(_ items: [ClipItem], after delay: TimeInterval) {
+        guard let item = items.first else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self else { return }
+            if let changeCount = PasteboardIO.write(item, store: self.store, keepFormatting: self.settings.value.keepFormatting, to: .general) {
+                self.monitor.skip(changeCount: changeCount)
+                Paster.pasteIntoFrontApp()
+            }
+            self.pasteInSequence(Array(items.dropFirst()), after: Self.sequenceGap)
+        }
     }
 
     // MARK: Windows and menu
@@ -184,7 +208,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if settingsWindow == nil {
             let view = SettingsView(settings: settings) { [weak self] in self?.confirmClearHistory() }
             let window = NSWindow(contentViewController: NSHostingController(rootView: view))
-            window.title = "NotchClip Settings"
+            window.title = "Pocket Settings"
             window.styleMask = [.titled, .closable]
             window.isReleasedWhenClosed = false
             window.center()
@@ -208,7 +232,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setUpStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        item.button?.image = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: "NotchClip")
+        let symbol = DemoMode.isOn ? "theatermasks.fill" : "doc.on.clipboard"
+        item.button?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Pocket")
         let menu = NSMenu()
         menu.delegate = self
         item.menu = menu
@@ -219,6 +244,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func enableAutoPaste() { Paster.requestPermission() }
     @objc private func settingsAction() { openSettings() }
     @objc private func clearHistoryAction() { confirmClearHistory() }
+    @objc private func toggleDemoAction() { DemoMode.toggle() }
 }
 
 extension AppDelegate: NSMenuDelegate {
@@ -234,9 +260,12 @@ extension AppDelegate: NSMenuDelegate {
         }
         menu.addItem(NSMenuItem(title: "Settings…", action: #selector(settingsAction), keyEquivalent: ","))
         menu.addItem(NSMenuItem(title: "Clear History…", action: #selector(clearHistoryAction), keyEquivalent: ""))
+        let demo = NSMenuItem(title: "Demo Mode (sample clips for recording)", action: #selector(toggleDemoAction), keyEquivalent: "")
+        demo.state = DemoMode.isOn ? .on : .off
+        menu.addItem(demo)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "\(store.items.count) clips saved", action: nil, keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Quit NotchClip", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: "Quit Pocket", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         menu.items.filter { $0.action != #selector(NSApplication.terminate(_:)) && $0.action != nil }.forEach { $0.target = self }
     }
 }

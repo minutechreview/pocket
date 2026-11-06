@@ -104,16 +104,16 @@ struct NotchView: View {
         .help("Back (Esc)")
     }
 
-    /// Shown when clips are queued with ⌘-click.
+    /// Shown when clips are picked with ⌘/⇧-click or ⇧ + arrow keys.
     private var stackBar: some View {
         HStack(spacing: 6) {
             Image(systemName: "square.stack.3d.up.fill").foregroundStyle(Color.notchAccent)
-            Text("Stack · \(model.stack.count)").fontWeight(.semibold)
+            Text("\(model.stack.count) picked").fontWeight(.semibold)
             Button("Paste all") { model.onPasteStack() }
                 .buttonStyle(.plain)
                 .padding(.horizontal, 8).frame(height: 20)
                 .background(Capsule().fill(Color.notchAccent)).foregroundStyle(.black)
-            Text("\(settings.value.stackShortcut.label) pastes next").foregroundStyle(.white.opacity(0.45))
+            Text(model.keyboardMode ? "↩ pastes all" : "\(settings.value.stackShortcut.label) pastes next").foregroundStyle(.white.opacity(0.45))
             iconButton("xmark", help: "Clear stack") { model.clearStack() }
         }
         .font(.system(size: 11))
@@ -184,10 +184,10 @@ struct NotchView: View {
         .contextMenu { menu(for: item) }
     }
 
-    /// Click pastes; ⌥-click pastes plain text; ⌘-click adds to the paste stack.
+    /// Click pastes; ⌥-click pastes plain text; ⌘- or ⇧-click picks it for "Paste all".
     private func tapped(_ item: ClipItem) {
         let flags = NSEvent.modifierFlags
-        if flags.contains(.command) {
+        if flags.contains(.command) || flags.contains(.shift) {
             model.toggleStack(item)
         } else {
             model.onPick(item, flags.contains(.option))

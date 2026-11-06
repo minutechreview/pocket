@@ -48,7 +48,7 @@ struct AITab: View {
         .alert("You're using your ChatGPT plan", isPresented: $showWelcome) {
             Button("Got it") { settings.value.hasSeenChatGPTWelcome = true }
         } message: {
-            Text("NotchClip's AI actions will use the usage included in your ChatGPT plan. You can review and limit it any time in ChatGPT settings → Usage.")
+            Text("Pocket's AI actions will use the usage included in your ChatGPT plan. You can review and limit it any time in ChatGPT settings → Usage.")
         }
     }
 
@@ -70,7 +70,7 @@ struct AITab: View {
         Section {
             switch chatGPT {
             case .signedOut:
-                Text("Use your ChatGPT plan in NotchClip. No API key needed.")
+                Text("Use your ChatGPT plan in Pocket. No API key needed.")
                 Button(action: signIn) {
                     HStack(spacing: 8) {
                         if busy { ProgressView().controlSize(.small) } else { Image(systemName: "bubble.left.and.bubble.right.fill") }
@@ -162,7 +162,7 @@ struct AITab: View {
             chatGPT = await ChatGPTAuth.shared.state
             models = []
             if !revoked {
-                error = "Signed out on this Mac. OpenAI didn't confirm, so you can also disconnect NotchClip in ChatGPT settings."
+                error = "Signed out on this Mac. OpenAI didn't confirm, so you can also disconnect Pocket in ChatGPT settings."
             }
         }
     }
