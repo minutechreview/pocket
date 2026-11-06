@@ -103,6 +103,41 @@ struct ClipStoreTests {
         #expect(makeStore().items.isEmpty)
     }
 
+    @Test func pinnedClipsComeFirstAndSurviveTheLimit() throws {
+        let store = makeStore(limit: 2)
+        let keep = try #require(store.addText("my email"))
+        store.setPinned(true, id: keep.id)
+        (1...4).forEach { store.addText("clip \($0)") }
+        #expect(store.ordered.map(\.text) == ["my email", "clip 4", "clip 3"])
+        #expect(makeStore(limit: 2).ordered.first?.pinned == true)
+    }
+
+    @Test func searchMatchesEveryWordIgnoringCase() {
+        let store = makeStore()
+        store.addText("Invoice for Kade, November")
+        store.addText("kade logo colours")
+        store.addText("Something else", source: ClipSource(name: "Safari", bundleID: nil))
+        #expect(store.search("KADE invoice").map(\.text) == ["Invoice for Kade, November"])
+        #expect(store.search("safari").count == 1)
+        #expect(store.search("  ").count == 3)
+    }
+
+    @Test func searchFindsTextInsideScreenshots() throws {
+        let store = makeStore()
+        let shot = try #require(store.addImage(png: png(red: 90)))
+        store.setOCRText("  Error 404: page not found \n", id: shot.id)
+        #expect(store.search("404").map(\.id) == [shot.id])
+        #expect(store.items.first?.ocrText == "Error 404: page not found")
+    }
+
+    @Test func oldHistoryWithoutNewFieldsStillLoads() throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let json = #"[{"id":"9E0D2C55-1E5C-4C55-9A57-3D6F0C6A0B11","kind":"text","text":"old","hash":"t1","date":"2026-11-06T02:00:00Z"}]"#
+        try Data(json.utf8).write(to: directory.appendingPathComponent("history.json"))
+        let item = try #require(makeStore().items.first)
+        #expect(item.text == "old" && item.pinned == false && item.ocrText == nil)
+    }
+
     @Test(arguments: [(10, "now"), (120, "2m"), (7200, "2h"), (172_800, "2d")])
     func relativeTimeLabels(seconds: Int, label: String) {
         let now = Date()

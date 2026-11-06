@@ -60,6 +60,11 @@ enum PasteboardIO {
         return pasteboard.changeCount
     }
 
+    static func write(text: String, to pasteboard: NSPasteboard) -> Int? {
+        pasteboard.clearContents()
+        return pasteboard.setString(text, forType: .string) ? pasteboard.changeCount : nil
+    }
+
     private static func imageData(_ pasteboard: NSPasteboard) -> Data? {
         if let png = pasteboard.data(forType: .png) { return png }
         return pasteboard.data(forType: .tiff).flatMap(pngData)

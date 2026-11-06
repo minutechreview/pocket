@@ -9,6 +9,7 @@ extension Color {
 /// The black shape that grows out of the notch.
 struct NotchView: View {
     @ObservedObject var model: NotchModel
+    @FocusState private var searchFocused: Bool
 
     private var shapeSize: CGSize { model.isOpen ? model.openSize : model.notchSize }
     private var radius: CGFloat { model.isOpen ? Layout.openRadius : Layout.closedRadius }
@@ -29,13 +30,14 @@ struct NotchView: View {
         .shadow(color: .black.opacity(model.isOpen ? 0.5 : 0), radius: 16, y: 8)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .environment(\.colorScheme, .dark)
+        .onChange(of: model.keyboardMode) { _, keyboard in searchFocused = keyboard }
     }
 
     private var content: some View {
         VStack(spacing: 6) {
             header
             if model.items.isEmpty {
-                emptyState
+                emptyState(searching: !model.query.isEmpty)
             } else {
                 grid
             }
@@ -52,13 +54,31 @@ struct NotchView: View {
             Text("Clipboard")
                 .fontWeight(.semibold)
             Spacer()
-            Text(model.keyboardMode ? "← → to choose · ⏎ to paste" : "Click to paste · ⌃⇧C")
-                .foregroundStyle(.white.opacity(0.5))
+            searchField
         }
         .font(.system(size: 12))
         .foregroundStyle(.white)
         .padding(.horizontal, 22)
         .frame(height: model.headerHeight)
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.white.opacity(0.5))
+            TextField("Search clips & screenshots", text: $model.query)
+                .textFieldStyle(.plain)
+                .focused($searchFocused)
+            if !model.query.isEmpty {
+                Button { model.query = "" } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(.white.opacity(0.5))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 9)
+        .frame(width: 230, height: 24)
+        .background(Capsule().fill(Color.white.opacity(searchFocused ? 0.16 : 0.09)))
     }
 
     private var grid: some View {
@@ -77,11 +97,8 @@ struct NotchView: View {
                             appIcon: model.appIcon(for: item)
                         )
                         .id(item.id)
-                        .onTapGesture { model.onPick(item) }
-                        .contextMenu {
-                            Button("Paste") { model.onPick(item) }
-                            Button("Delete", role: .destructive) { model.onDelete(item) }
-                        }
+                        .onTapGesture { model.onPick(item, false) }
+                        .contextMenu { menu(for: item) }
                     }
                 }
                 .padding(.horizontal, Layout.sidePadding)
@@ -94,11 +111,22 @@ struct NotchView: View {
         }
     }
 
-    private var emptyState: some View {
+    @ViewBuilder
+    private func menu(for item: ClipItem) -> some View {
+        Button("Paste") { model.onPick(item, false) }
+        if item.hasReadableText {
+            Button("Paste Text from Image") { model.onPick(item, true) }
+        }
+        Button(item.pinned ? "Unpin" : "Pin") { model.onTogglePin(item) }
+        Divider()
+        Button("Delete", role: .destructive) { model.onDelete(item) }
+    }
+
+    private func emptyState(searching: Bool) -> some View {
         VStack(spacing: 8) {
-            Image(systemName: "doc.on.clipboard")
+            Image(systemName: searching ? "magnifyingglass" : "doc.on.clipboard")
                 .font(.system(size: 28))
-            Text("Copy some text or take a screenshot.\nIt shows up here.")
+            Text(searching ? "Nothing matches “\(model.query)”" : "Copy some text or take a screenshot.\nIt shows up here.")
                 .multilineTextAlignment(.center)
                 .font(.system(size: 12))
         }

@@ -33,9 +33,19 @@ final class NotchModel: ObservableObject {
     @Published var notchSize = CGSize(width: 200, height: 32)
     @Published var hasNotch = true
     @Published var toast: String?
+    /// Search box text. Changing it filters the clips.
+    @Published var query = "" {
+        didSet {
+            guard query != oldValue else { return }
+            selection = 0
+            refilter()
+        }
+    }
 
-    var onPick: (ClipItem) -> Void = { _ in }
+    /// Paste a clip. `asText` pastes the text read from an image instead of the image.
+    var onPick: (ClipItem, _ asText: Bool) -> Void = { _, _ in }
     var onDelete: (ClipItem) -> Void = { _ in }
+    var onTogglePin: (ClipItem) -> Void = { _ in }
 
     private let store: ClipStore
     private var thumbnails: [UUID: NSImage] = [:]
@@ -43,17 +53,25 @@ final class NotchModel: ObservableObject {
 
     init(store: ClipStore) {
         self.store = store
-        self.items = store.items
+        self.items = store.ordered
     }
 
     var headerHeight: CGFloat { max(notchSize.height, 28) }
     var openSize: CGSize { CGSize(width: Layout.openWidth, height: Layout.openHeight(headerHeight: headerHeight)) }
 
     func reload() {
-        items = store.items
-        let ids = Set(items.map(\.id))
+        refilter()
+        let ids = Set(store.items.map(\.id))
         thumbnails = thumbnails.filter { ids.contains($0.key) }
+    }
+
+    private func refilter() {
+        items = store.search(query)
         selection = min(selection, max(0, items.count - 1))
+    }
+
+    var selectedItem: ClipItem? {
+        items.indices.contains(selection) ? items[selection] : nil
     }
 
     func thumbnail(for item: ClipItem) -> NSImage? {

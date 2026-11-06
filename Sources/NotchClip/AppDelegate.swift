@@ -11,16 +11,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var monitor = ClipboardMonitor(store: store)
     private lazy var model = NotchModel(store: store)
     private lazy var controller = NotchController(model: model)
+    private lazy var textReader = TextReader(store: store)
     private var hotKey: HotKey?
     private var statusItem: NSStatusItem?
     private var askedForPermission = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         store.onChange = { [weak self] in
-            MainActor.assumeIsolated { self?.model.reload() }
+            MainActor.assumeIsolated {
+                self?.model.reload()
+                self?.textReader.readPending()
+            }
         }
-        model.onPick = { [weak self] item in self?.pick(item) }
+        model.onPick = { [weak self] item, asText in self?.pick(item, asText: asText) }
         model.onDelete = { [weak self] item in self?.store.remove(id: item.id) }
+        model.onTogglePin = { [weak self] item in self?.store.setPinned(!item.pinned, id: item.id) }
+        textReader.readPending()
 
         controller.start()
         monitor.start()
@@ -38,13 +44,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: Picking a clip
 
-    private func pick(_ item: ClipItem) {
-        guard let changeCount = PasteboardIO.write(item, store: store, to: .general) else {
+    private func pick(_ item: ClipItem, asText: Bool) {
+        let changeCount: Int?
+        if asText {
+            guard item.hasReadableText, let text = item.ocrText else {
+                model.showToast("No text found in this image")
+                return
+            }
+            changeCount = PasteboardIO.write(text: text, to: .general)
+        } else {
+            changeCount = PasteboardIO.write(item, store: store, to: .general)
+        }
+        guard let changeCount else {
             model.showToast("That clip couldn't be loaded")
             return
         }
         monitor.skip(changeCount: changeCount)
-        store.promote(id: item.id)
+        if !item.pinned { store.promote(id: item.id) }
 
         guard Paster.isAllowed else {
             // Without the Accessibility permission we can only copy; the user presses ⌘V.

@@ -89,6 +89,32 @@ public final class ClipStore {
         save()
     }
 
+    public func setPinned(_ pinned: Bool, id: UUID) {
+        replace(id: id) { $0.with(pinned: pinned) }
+    }
+
+    /// Stores text read from an image. An empty string means "read, but no text found".
+    public func setOCRText(_ text: String, id: UUID) {
+        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        replace(id: id) { $0.with(ocrText: cleaned) }
+    }
+
+    /// Pinned clips first (newest first), then the rest, newest first.
+    public var ordered: [ClipItem] {
+        items.filter(\.pinned) + items.filter { !$0.pinned }
+    }
+
+    /// Clips whose text, screenshot text or app name contain every word of `query`.
+    public func search(_ query: String) -> [ClipItem] {
+        let words = query.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard !words.isEmpty else { return ordered }
+        let options: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
+        return ordered.filter { item in
+            let haystack = item.searchableText
+            return words.allSatisfy { haystack.range(of: $0, options: options) != nil }
+        }
+    }
+
     public func remove(id: UUID) {
         guard let item = items.first(where: { $0.id == id }) else { return }
         deleteFiles(of: item)
@@ -112,10 +138,18 @@ public final class ClipStore {
 
     private func insert(_ item: ClipItem) -> ClipItem {
         let all = [item] + items
-        all.dropFirst(limit).forEach(deleteFiles)
-        items = Array(all.prefix(limit))
+        // The limit counts unpinned clips only; pinned ones are kept until unpinned.
+        let overflow = Set(all.filter { !$0.pinned }.dropFirst(limit).map(\.id))
+        all.filter { overflow.contains($0.id) }.forEach(deleteFiles)
+        items = all.filter { !overflow.contains($0.id) }
         save()
         return item
+    }
+
+    private func replace(id: UUID, _ change: (ClipItem) -> ClipItem) {
+        guard items.contains(where: { $0.id == id }) else { return }
+        items = items.map { $0.id == id ? change($0) : $0 }
+        save()
     }
 
     private func deleteFiles(of item: ClipItem) {
@@ -143,7 +177,8 @@ public final class ClipStore {
             guard let url = imageURL(for: item) else { return true }
             return fileManager.fileExists(atPath: url.path)
         }
-        return Array(present.prefix(limit))
+        let keptUnpinned = Set(present.filter { !$0.pinned }.prefix(limit).map(\.id))
+        return present.filter { $0.pinned || keptUnpinned.contains($0.id) }
     }
 
     // MARK: Helpers

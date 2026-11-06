@@ -18,6 +18,7 @@ struct ClipCard: View {
             preview
                 .frame(width: Layout.cardWidth - 14, height: Layout.cardHeight - 38)
                 .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .overlay(alignment: .topTrailing) { badges }
             footer
         }
         .padding(7)
@@ -47,6 +48,7 @@ struct ClipCard: View {
                 .lineLimit(5)
                 .multilineTextAlignment(.leading)
                 .padding(8)
+                .padding(.trailing, item.pinned ? 14 : 0)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .background(Color.white.opacity(0.05))
         case .image:
@@ -63,6 +65,28 @@ struct ClipCard: View {
                     .background(Color.white.opacity(0.05))
             }
         }
+    }
+
+    /// Pin marker, and a "Text" chip on screenshots whose text can be pasted.
+    private var badges: some View {
+        HStack(spacing: 4) {
+            if item.hasReadableText {
+                Text("TEXT")
+                    .font(.system(size: 8, weight: .heavy, design: .rounded))
+                    .padding(.horizontal, 5)
+                    .frame(height: 15)
+                    .background(Capsule().fill(.black.opacity(0.7)))
+                    .foregroundStyle(.white)
+            }
+            if item.pinned {
+                Image(systemName: "pin.fill")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.black)
+                    .frame(width: 15, height: 15)
+                    .background(Circle().fill(Color.notchAccent))
+            }
+        }
+        .padding(5)
     }
 
     private var footer: some View {

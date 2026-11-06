@@ -113,6 +113,7 @@ final class NotchController {
 
     func close() {
         guard model.isOpen else { return }
+        model.query = ""
         withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) { model.isOpen = false }
         model.keyboardMode = false
         giveFocusBack()
@@ -191,33 +192,31 @@ final class NotchController {
 
     // MARK: Keyboard (only while the panel has focus after the shortcut)
 
+    /// Typing goes to the search box; these keys drive the clips instead.
     private func handleKey(_ event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let command = flags.contains(.command)
+        let selected = model.selectedItem
         switch Int(event.keyCode) {
-        case 53: close()                                   // Esc
-        case 36, 76: pickSelected()                        // Return, Enter
+        case 53:                                           // Esc: clear search, then close
+            if model.query.isEmpty { close() } else { model.query = "" }
+        case 36, 76:                                       // Return (⇧ = paste text from image)
+            if let selected { model.onPick(selected, flags.contains(.shift)) }
         case 123: model.moveSelection(by: -1)              // ←
         case 124: model.moveSelection(by: 1)               // →
         case 126: model.moveSelection(by: -Layout.columns) // ↑
         case 125: model.moveSelection(by: Layout.columns)  // ↓
-        case 51, 117: deleteSelected()                     // Delete
+        case 51 where command, 117 where command:          // ⌘⌫ removes the clip
+            if let selected { model.onDelete(selected) }
+        case 35 where command:                             // ⌘P pins / unpins
+            if let selected { model.onTogglePin(selected) }
         default:
-            guard let digit = event.charactersIgnoringModifiers.flatMap(Int.init), event.modifierFlags.isDisjoint(with: [.command, .control]) else {
+            guard command, let digit = event.charactersIgnoringModifiers.flatMap(Int.init) else {
                 return false
             }
-            let index = digit == 0 ? 9 : digit - 1
-            guard model.items.indices.contains(index) else { return true }
-            model.onPick(model.items[index])
+            let index = digit == 0 ? 9 : digit - 1          // ⌘1…⌘9, ⌘0 pastes that clip
+            if model.items.indices.contains(index) { model.onPick(model.items[index], false) }
         }
         return true
-    }
-
-    private func pickSelected() {
-        guard model.items.indices.contains(model.selection) else { return }
-        model.onPick(model.items[model.selection])
-    }
-
-    private func deleteSelected() {
-        guard model.items.indices.contains(model.selection) else { return }
-        model.onDelete(model.items[model.selection])
     }
 }

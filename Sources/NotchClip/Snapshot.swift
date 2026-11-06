@@ -2,7 +2,7 @@ import AppKit
 import NotchClipCore
 import SwiftUI
 
-/// `NotchClip --snapshot out.png [history-folder]` renders the open panel to a PNG and quits.
+/// `NotchClip --snapshot out.png [history-folder] [--keyboard] [--query words]` renders the open panel to a PNG and quits.
 /// Used to check the design and make screenshots without screen-recording access.
 @MainActor
 enum Snapshot {
@@ -22,6 +22,10 @@ enum Snapshot {
         model.isOpen = true
         model.keyboardMode = keyboard
         model.selection = keyboard ? 1 : 0
+        let args = CommandLine.arguments
+        if let flag = args.firstIndex(of: "--query"), args.count > flag + 1 {
+            model.query = args[flag + 1]
+        }
 
         let size = NSSize(
             width: model.openSize.width + Layout.shadowMargin * 2,
